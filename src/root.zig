@@ -16,6 +16,7 @@ const Command = enum {
     EndIf,
     Comment,
     LineComment,
+    NewLine,
     Mod2,
     Mod4,
     Mod8,
@@ -34,6 +35,7 @@ const Command = enum {
             '4' => Command.Mod4,
             '8' => Command.Mod8,
             ';' => Command.LineComment,
+            '\n' => Command.NewLine,
             else => Command.Comment,
         };
     }
@@ -46,12 +48,13 @@ const BFMachine = struct {
     ptr: usize,
     input: std.io.AnyReader,
     output: std.io.AnyWriter,
+    allocator: std.mem.Allocator,
     const Self = @This();
 
-    pub fn init(input: std.io.AnyReader, output: std.io.AnyWriter) BFMachine {
+    pub fn init(allocator: std.mem.Allocator, input: std.io.AnyReader, output: std.io.AnyWriter) BFMachine {
         const memory = [_]u8{0} ** 30000;
 
-        return .{ .memory = memory, .ptr = 0, .input = input, .output = output };
+        return .{ .memory = memory, .ptr = 0, .input = input, .output = output, .allocator = allocator };
     }
 
     fn move(self: *Self, int_type: comptime_int, direction: Direction) void {
@@ -145,27 +148,62 @@ const BFMachine = struct {
         self.ptr = cur_ptr;
     }
 
-    pub fn interpret(self: *Self, code: []u8) BFInterpreterError!void {
+    fn is_zero(self: *Self, int_type: comptime_int) bool {
+        return self.load_int(int_type) == 0;
+    }
+
+    pub fn interpret(self: *Self, code: []const u8) BFInterpreterError!void {
         var code_ptr: usize = 0;
         var int_type: comptime_int = u8;
         var mod_on = false;
+        var if_stack = std.ArrayList(usize).init(self.allocator);
+        defer if_stack.deinit();
+        var skip_to_endif = false;
+        var skip_to_newline = false;
+        var skipped_ifs: usize = 0;
 
         while (code_ptr < code.len) : (code_ptr += 1) {
             const cur_command = Command.from_char(code[code_ptr]);
 
-            switch (cur_command) {
-                .PtrRight => self.move_right(int_type),
-                .PtrLeft => self.move_left(int_type),
-                .Mod2 => int_type = u16,
-                .Mod4 => int_type = u32,
-                .Mod8 => int_type = u64,
-                .Increment => self.increment(int_type),
-                .Decrement => self.decrement(int_type),
-                .Read => self.read(int_type),
-                .Print => self.print(int_type),
-                else => {},
+            if (skip_to_newline) {
+                skip_to_newline = cur_command != Command.NewLine;
+            } else {
+                switch (cur_command) {
+                    .PtrRight => self.move_right(int_type),
+                    .PtrLeft => self.move_left(int_type),
+                    .Mod2 => int_type = u16,
+                    .Mod4 => int_type = u32,
+                    .Mod8 => int_type = u64,
+                    .Increment => self.increment(int_type),
+                    .Decrement => self.decrement(int_type),
+                    .Read => self.read(int_type),
+                    .Print => self.print(int_type),
+                    .If => {
+                        if (skip_to_endif) {
+                            skipped_ifs += 1;
+                        } else if (self.is_zero(int_type)) {
+                            skip_to_endif = true;
+                        } else {
+                            if_stack.append(code_ptr);
+                        }
+                    },
+                    .EndIf => {
+                        if (skip_to_endif) {
+                            if (skipped_ifs == 0) {
+                                skip_to_endif = false;
+                            } else {
+                                skipped_ifs -= 1;
+                            }
+                        } else {
+                            code_ptr = if_stack.popOrNull() orelse return BFInterpreterError.InvalidSyntax;
+                        }
+                    },
+                    .LineComment => {
+                        skip_to_newline = true;
+                    },
+                    else => {},
+                }
             }
-
             if (int_type != u8) {
                 mod_on = !mod_on;
                 if (!mod_on) {
