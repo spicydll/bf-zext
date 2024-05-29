@@ -47,11 +47,11 @@ const BFMachine = struct {
     memory: [30000]u8,
     ptr: usize,
     input: std.io.AnyReader,
-    output: std.io.AnyWriter,
+    output: anyopaque,
     allocator: std.mem.Allocator,
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, input: std.io.AnyReader, output: std.io.AnyWriter) BFMachine {
+    pub fn init(allocator: std.mem.Allocator, input: std.io.AnyReader, output: anyopaque) BFMachine {
         const memory = [_]u8{0} ** 30000;
 
         return .{ .memory = memory, .ptr = 0, .input = input, .output = output, .allocator = allocator };
@@ -212,4 +212,53 @@ const BFMachine = struct {
             }
         }
     }
+
+    //fn test_interpreter(allocator: std.mem.Allocator, code: []const u8, input: []const u8, output: []u8) BFMachine {
+
+    //}
+
+    test "Basic Features" {
+        const allocator = std.testing.allocator;
+        const code = ",>,.<.";
+        const input = std.io.fixedBufferStream("AB").reader();
+        var output_buf: [2]u8 = undefined;
+        const output = std.io.fixedBufferStream(&output_buf).writer();
+        var interpreter = BFMachine.init(allocator, input, output);
+
+        try interpreter.interpret(code);
+        try std.testing.expectEqualSlices(u8, "BA", output_buf);
+    }
+
+    test "Increment Decrement" {
+        const allocator = std.testing.allocator;
+        const code = ",++.--.";
+        const input = std.io.fixedBufferStream("A").reader();
+        var output_buf: [2]u8 = undefined;
+        const output = std.io.fixedBufferStream(&output_buf).writer();
+        var interpreter = BFMachine.init(allocator, input, output);
+
+        try interpreter.interpret(code);
+        try std.testing.expectEqualSlices(u8, "CA", output_buf);
+    }
+
+    test "If loops" {
+        const allocator = std.testing.allocator;
+        const code = ">++++++[<++++++++++>-]<+++++.";
+        const input = std.io.fixedBufferStream("").reader();
+        var output_buf: [1]u8 = undefined;
+        const output = std.io.fixedBufferStream(&output_buf).writer();
+        var interpreter = BFMachine.init(allocator, input, output);
+
+        try interpreter.interpret(code);
+        try std.testing.expectEqualSlices(u8, "A", output_buf);
+    }
 };
+
+test "BF Language Features" {
+    std.testing.refAllDecls(BFMachine);
+    // TODO:
+    // 1. reader from u8[] slice
+    // 2. test basic features ",>,<.>."
+    // 3. test inc dec ",++.--."
+    // 4. test if loops ">+++++[<++++++++++>-]<+++++."
+}
